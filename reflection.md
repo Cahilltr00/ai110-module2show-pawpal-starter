@@ -5,9 +5,19 @@
 **a. Initial design**
 
 - Briefly describe your initial UML design.
-- What classes did you include, and what responsibilities did you assign to each?
+  - Three actions this app will include are:
+    -> Track feeding time
+    -> Schedule time at the park
+    -> Keep track of Vet visits (annual checkup, unplanned visits)
 
-**b. Design changes**
+- What classes did you include, and what responsibilities did you assign to each?
+  1. User: - name - age - addPet() - removePet() - getPets()
+
+  2. Animal - type - name - age - getProfile() - addTask() - getTasks() - addHealthRecord() - getHealthRecord()
+  3. Task - type - duration - cost - priority - create() - schedule() - isOverdue() - complete()
+  4. Health - healthId - animalId - recordType - createdAt - updatedAt - logVetVisit() - logSymptom() - getVaccineRecord() - isVaccineDue()
+
+  **b. Design changes**
 
 - Did your design change during implementation?
 - If yes, describe at least one change and why you made it.
