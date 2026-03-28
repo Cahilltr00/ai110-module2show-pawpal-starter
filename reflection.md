@@ -18,6 +18,10 @@
   4. Health - healthId - animalId - recordType - createdAt - updatedAt - logVetVisit() - logSymptom() - getVaccineRecord() - isVaccineDue()
 
   **b. Design changes**
+  - Claude found a few high severity issues, a few medium and one low:
+    -> High severity: - No animal.id in Animal class - Task class wasn't linked to Animal class - There wasn't a due_date attribute for is_overdue() in Task class
+    -> Medium severity: - No user_id on User class - No data field for vaccine in Health class - No next_due_date field for is_vaccine_due() in Health class
+    -> Low: - Task.create() was redundant
 
 - Did your design change during implementation?
 - If yes, describe at least one change and why you made it.
