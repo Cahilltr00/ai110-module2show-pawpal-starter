@@ -45,3 +45,11 @@ pip install -r requirements.txt
 ### Smarter Scheduling
 
     The apps scheduling (this app is Health class) process is much improved and more efficient for the user. It now sorts tasks based on time, filters by whether or not the task is completed or not. The new scheduler also detects conflicts, if ever a user unintentionally schedules two tasks at the same time the app will warn them.
+
+### Testing PawPal+
+
+    python -m pytest
+
+    This command runs tests that cover whether out-of-order input gets sorted chronologically, covers the enforcement of priority rankings. This test suite also covers whether or not there are conflicts with task times, if there is a message should be displayed showing which times and pets are conflicting.
+
+    Confidence Level: ****
