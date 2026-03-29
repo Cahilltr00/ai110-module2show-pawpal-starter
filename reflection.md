@@ -38,7 +38,9 @@
 **b. Tradeoffs**
 
 - Describe one tradeoff your scheduler makes.
+    -> In the Health(scheduler) class, all records are stored as dictionaries in a list, everytime something needs to be looked up the entire list is iterated over.
 - Why is that tradeoff reasonable for this scenario?
+    -> The list isn't going to be extremely long (i.e. 1000's of items) so the searching doesn't take an unreasonable amount of time
 
 ---
 

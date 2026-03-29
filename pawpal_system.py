@@ -1,9 +1,10 @@
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, time, datetime, timedelta
 from typing import Optional
 import uuid
 
+PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 # ---------------------------------------------------------------------------
 # Task — represents a single pet care activity
@@ -18,6 +19,7 @@ class Task:
     animal_id: str          # links task to an Animal
     scheduled_time: Optional[time] = None   # time of day this task should happen
     completed: bool = False
+    recurrence: Optional[str] = None        # "daily", "weekly", or None
     task_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     def schedule(self, scheduled_time: time) -> None:
@@ -99,10 +101,34 @@ class User:
         """Return all pets owned by this user."""
         return list(self._pets)
 
+    def detect_conflicts(self) -> list[str]:
+        """
+        Check all scheduled, incomplete tasks across all pets for time collisions.
+        Returns a list of warning strings (one per conflicting slot); empty if none.
+        """
+        animal_name_map = {a.animal_id: a.name for a in self._pets}
+        time_slots: dict[time, list[Task]] = {}
+
+        for animal in self._pets:
+            for task in animal.get_tasks():
+                if not task.completed and task.scheduled_time is not None:
+                    time_slots.setdefault(task.scheduled_time, []).append(task)
+
+        warnings = []
+        for slot_time, tasks in time_slots.items():
+            if len(tasks) > 1:
+                slot_str = slot_time.strftime("%I:%M %p")
+                labels = ", ".join(
+                    f"{animal_name_map.get(t.animal_id, t.animal_id)}: {t.type}"
+                    for t in tasks
+                )
+                warnings.append(f"Conflict at {slot_str} — {labels}")
+
+        return warnings
+
     def print_daily_schedule(self) -> None:
         """Print today's schedule for all pets, grouped by pet and sorted by time."""
         today_str = datetime.now().strftime("%A, %B %d %Y")
-        order = {"high": 0, "medium": 1, "low": 2}
 
         # Gather all incomplete tasks across every pet
         all_tasks = [
@@ -119,6 +145,10 @@ class User:
             print("  No tasks scheduled for today.")
             print(f"{'=' * 48}\n")
             return
+
+        # Warn about any scheduling conflicts before listing tasks
+        for warning in self.detect_conflicts():
+            print(f"  WARNING: {warning}")
 
         # Group by animal
         grouped: dict[str, list[Task]] = {}
@@ -138,7 +168,7 @@ class User:
                 tasks,
                 key=lambda t: (
                     t.scheduled_time or time.max,
-                    order.get(t.priority, 9),
+                    PRIORITY_ORDER.get(t.priority, 9),
                 ),
             )
 
@@ -214,38 +244,143 @@ class Health:
 
     def is_vaccine_due(self, animal_id: str) -> bool:
         """Return True if any vaccine for this pet is due today or overdue."""
-        for record in self.get_vaccine_record(animal_id):
-            if record["next_due_date"] and date.today() >= record["next_due_date"]:
-                return True
-        return False
+        return any(
+            r["next_due_date"] and date.today() >= r["next_due_date"]
+            for r in self._records
+            if r["animal_id"] == animal_id and r["record_type"] == "vaccine"
+        )
 
     # --- scheduler / brain methods ---
 
     def get_all_tasks(self) -> list[Task]:
-        """Return every task across all registered pets."""
-        tasks = []
-        for animal in self._animals:
-            tasks.extend(animal.get_tasks())
-        return tasks
+        """
+        Flatten every pet's task list into a single list.
+
+        Iterates all registered animals using a nested list comprehension —
+        O(n) where n is the total number of tasks across all pets.
+        """
+        return [t for animal in self._animals for t in animal.get_tasks()]
+
+    def detect_conflicts(self) -> list[str]:
+        """
+        Scan all scheduled, incomplete tasks for time-slot collisions.
+
+        Builds a dict keyed by scheduled_time, grouping every task that
+        shares that slot. Any slot with more than one task is a conflict.
+        Returns one human-readable warning string per conflicting slot,
+        or an empty list when the schedule is clean. Never raises.
+        """
+        animal_map = {a.animal_id: a.name for a in self._animals}
+        time_slots: dict[time, list[Task]] = {}
+
+        for task in self.get_all_tasks():
+            if not task.completed and task.scheduled_time is not None:
+                time_slots.setdefault(task.scheduled_time, []).append(task)
+
+        warnings = []
+        for slot_time, tasks in time_slots.items():
+            if len(tasks) > 1:
+                slot_str = slot_time.strftime("%I:%M %p")
+                labels = ", ".join(
+                    f"{animal_map.get(t.animal_id, t.animal_id)}: {t.type}"
+                    for t in tasks
+                )
+                warnings.append(f"Conflict at {slot_str} — {labels}")
+
+        return warnings
 
     def get_overdue_tasks(self) -> list[Task]:
-        """Return all incomplete tasks whose scheduled time has passed today."""
+        """
+        Return all tasks whose scheduled time has already passed today.
+
+        Delegates to get_all_tasks() then filters via Task.is_overdue(),
+        which checks that the task is incomplete and its scheduled_time
+        is before the current wall-clock time.
+        """
         return [t for t in self.get_all_tasks() if t.is_overdue()]
 
     def get_upcoming_tasks(self, hours: int = 2) -> list[Task]:
-        """Return incomplete tasks scheduled within the next `hours` hours."""
-        now = datetime.now().time()
-        cutoff = (datetime.now() + timedelta(hours=hours)).time()
+        """
+        Return incomplete tasks scheduled within the next `hours` hours.
+
+        Captures datetime.now() once to avoid clock drift between the
+        window boundaries, then filters tasks whose scheduled_time falls
+        in the half-open interval [now, now + hours).
+        """
+        now_dt = datetime.now()
+        now = now_dt.time()
+        cutoff = (now_dt + timedelta(hours=hours)).time()
         return [
             t for t in self.get_all_tasks()
             if not t.completed and t.scheduled_time and now <= t.scheduled_time <= cutoff
         ]
 
     def prioritize_tasks(self) -> list[Task]:
-        """Return all incomplete tasks sorted by priority then by earliest scheduled time."""
-        order = {"high": 0, "medium": 1, "low": 2}
+        """
+        Return all incomplete tasks sorted by priority, then by scheduled time.
+
+        Uses PRIORITY_ORDER to map priority strings to integers so that
+        'high' < 'medium' < 'low'. Tasks with no scheduled_time sort
+        last within their priority tier via the time.max sentinel.
+        """
         pending = [t for t in self.get_all_tasks() if not t.completed]
         return sorted(
             pending,
-            key=lambda t: (order.get(t.priority, 9), t.scheduled_time or time.max),
+            key=lambda t: (PRIORITY_ORDER.get(t.priority, 9), t.scheduled_time or time.max),
         )
+
+    def sort_by_time(self, tasks: list[Task]) -> list[Task]:
+        """
+        Sort a task list by scheduled_time expressed as "HH:MM" strings.
+
+        String comparison works correctly for zero-padded 24-hour time.
+        Tasks with no scheduled_time receive the sentinel "99:99" so
+        they always sort to the end of the list.
+        """
+        return sorted(
+            tasks,
+            key=lambda t: t.scheduled_time.strftime("%H:%M") if t.scheduled_time else "99:99",
+        )
+
+    def filter_by_completion(self, tasks: list[Task], completed: bool) -> list[Task]:
+        """
+        Filter a task list by completion status.
+
+        Pass completed=True to get finished tasks, False for pending ones.
+        The input list is not modified; a new list is returned.
+        """
+        return [t for t in tasks if t.completed == completed]
+
+    def filter_by_pet_name(self, tasks: list[Task], name: str) -> list[Task]:
+        """
+        Filter a task list to only tasks belonging to the named pet.
+
+        Builds a name->animal_id lookup once, then filters tasks by
+        animal_id. Matching is case-insensitive. Returns an empty list
+        if no registered animal has that name.
+        """
+        name_to_id = {a.name.lower(): a.animal_id for a in self._animals}
+        target_id = name_to_id.get(name.lower())
+        return [t for t in tasks if t.animal_id == target_id]
+
+    def complete_task(self, task: Task) -> Optional[Task]:
+        """
+        Mark a task complete and spawn the next occurrence if it recurs.
+
+        For 'daily' or 'weekly' tasks, uses dataclasses.replace() to
+        clone the completed task with a fresh task_id and completed=False,
+        then registers the clone on the same animal. Returns the new task,
+        or None if the task has no recurrence or the animal is not found.
+        """
+        task.complete()
+
+        if task.recurrence not in ("daily", "weekly"):
+            return None
+
+        animal = next((a for a in self._animals if a.animal_id == task.animal_id), None)
+        if animal is None:
+            return None
+
+        next_task = replace(task, completed=False, task_id=str(uuid.uuid4()))
+        animal.add_task(next_task)
+        return next_task

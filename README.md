@@ -41,3 +41,7 @@ pip install -r requirements.txt
 5. Add tests to verify key behaviors.
 6. Connect your logic to the Streamlit UI in `app.py`.
 7. Refine UML so it matches what you actually built.
+
+### Smarter Scheduling
+
+    The apps scheduling (this app is Health class) process is much improved and more efficient for the user. It now sorts tasks based on time, filters by whether or not the task is completed or not. The new scheduler also detects conflicts, if ever a user unintentionally schedules two tasks at the same time the app will warn them.
