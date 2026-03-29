@@ -1,6 +1,6 @@
 import streamlit as st
 from datetime import time
-from pawpal_system import User, Animal, Task, PRIORITY_ORDER
+from pawpal_system import User, Animal, Task, Health
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
@@ -14,8 +14,8 @@ if "user" not in st.session_state:
     st.session_state.user = None
 if "animal" not in st.session_state:
     st.session_state.animal = None
-if "tasks" not in st.session_state:
-    st.session_state.tasks = []
+if "scheduler" not in st.session_state:
+    st.session_state.scheduler = None
 
 # ---------------------------------------------------------------------------
 # Pet & Owner setup
@@ -34,10 +34,14 @@ with col2:
 species = st.selectbox("Species", ["dog", "cat", "other"])
 
 if st.button("Add / Update Pet"):
-    st.session_state.user = User(owner_name, owner_age)
-    st.session_state.animal = Animal(species, pet_name, pet_age)
-    st.session_state.user.add_pet(st.session_state.animal)
-    st.session_state.tasks = []
+    scheduler = Health()
+    animal = Animal(species, pet_name, pet_age)
+    user = User(owner_name, owner_age)
+    user.add_pet(animal)
+    scheduler.register_animal(animal)
+    st.session_state.user = user
+    st.session_state.animal = animal
+    st.session_state.scheduler = scheduler
     st.success(f"Profile saved — {owner_name}'s pet {pet_name} ({species}) is ready.")
 
 if st.session_state.animal:
@@ -62,11 +66,15 @@ with col3:
 with col4:
     cost = st.number_input("Cost ($)", min_value=0.0, value=0.0, step=0.5, format="%.2f")
 
-use_time = st.checkbox("Set a scheduled time")
-scheduled_time = None
-if use_time:
-    t = st.time_input("Scheduled time", value=time(8, 0))
-    scheduled_time = t
+col_time, col_recur = st.columns(2)
+with col_time:
+    use_time = st.checkbox("Set a scheduled time")
+    scheduled_time = None
+    if use_time:
+        scheduled_time = st.time_input("Scheduled time", value=time(8, 0))
+with col_recur:
+    recurrence_choice = st.selectbox("Recurrence", ["none", "daily", "weekly"])
+    recurrence = None if recurrence_choice == "none" else recurrence_choice
 
 if st.button("Add task"):
     if st.session_state.animal is None:
@@ -79,58 +87,111 @@ if st.button("Add task"):
             priority=priority,
             animal_id=st.session_state.animal.animal_id,
             scheduled_time=scheduled_time,
+            recurrence=recurrence,
         )
         st.session_state.animal.add_task(task)
-        st.session_state.tasks.append({
-            "title": task_title,
-            "duration (min)": int(duration),
-            "priority": priority,
-            "cost ($)": f"{cost:.2f}",
-            "time": scheduled_time.strftime("%I:%M %p") if scheduled_time else "anytime",
-        })
         st.success(f"Task '{task_title}' added to {st.session_state.animal.name}.")
 
-if st.session_state.tasks:
-    st.write("Current tasks:")
-    st.table(st.session_state.tasks)
-else:
-    st.info("No tasks yet. Add one above.")
+# Display tasks directly from the animal — single source of truth
+if st.session_state.animal:
+    current_tasks = st.session_state.animal.get_tasks()
+    if current_tasks:
+        st.write("Current tasks:")
+        st.table([
+            {
+                "title": t.type,
+                "time": t.scheduled_time.strftime("%I:%M %p") if t.scheduled_time else "anytime",
+                "priority": t.priority,
+                "duration (min)": t.duration,
+                "cost ($)": f"{t.cost:.2f}",
+                "recurrence": t.recurrence or "—",
+                "done": "✓" if t.completed else "",
+            }
+            for t in current_tasks
+        ])
+    else:
+        st.info("No tasks yet. Add one above.")
 
 st.divider()
 
 # ---------------------------------------------------------------------------
-# Schedule generation
+# Complete a task  (uses Health.complete_task for recurrence spawning)
+# ---------------------------------------------------------------------------
+
+st.subheader("Complete a Task")
+
+if st.session_state.scheduler and st.session_state.animal:
+    scheduler: Health = st.session_state.scheduler
+    pending = [t for t in st.session_state.animal.get_tasks() if not t.completed]
+
+    if pending:
+        task_labels = [
+            f"{t.type} @ {t.scheduled_time.strftime('%I:%M %p') if t.scheduled_time else 'anytime'}"
+            f" [{t.priority}]{' (repeats ' + t.recurrence + ')' if t.recurrence else ''}"
+            for t in pending
+        ]
+        selected_label = st.selectbox("Select task to complete", task_labels)
+        selected_task = pending[task_labels.index(selected_label)]
+
+        if st.button("Mark complete"):
+            next_task = scheduler.complete_task(selected_task)
+            if next_task:
+                st.success(
+                    f"'{selected_task.type}' done. Next {selected_task.recurrence} "
+                    f"occurrence added to the schedule."
+                )
+            else:
+                st.success(f"'{selected_task.type}' marked complete.")
+            st.rerun()
+    else:
+        st.info("No pending tasks to complete.")
+else:
+    st.info("Add a pet and tasks to use this section.")
+
+st.divider()
+
+# ---------------------------------------------------------------------------
+# Schedule generation  (uses Health.prioritize_tasks / detect_conflicts)
 # ---------------------------------------------------------------------------
 
 st.subheader("Build Schedule")
 
 if st.button("Generate schedule"):
-    if st.session_state.user is None or st.session_state.animal is None:
+    if st.session_state.scheduler is None or st.session_state.animal is None:
         st.error("Please add a pet first using the 'Add / Update Pet' button.")
     else:
-        all_tasks = [t for t in st.session_state.animal.get_tasks() if not t.completed]
+        scheduler: Health = st.session_state.scheduler
 
-        if not all_tasks:
-            st.warning("No tasks scheduled. Add some tasks above.")
-        else:
-            sorted_tasks = sorted(
-                all_tasks,
-                key=lambda t: (PRIORITY_ORDER.get(t.priority, 9), t.scheduled_time or time.max),
+        # Conflict warnings via Health.detect_conflicts
+        for warning in scheduler.detect_conflicts():
+            st.warning(f"Scheduling conflict: {warning}")
+
+        # Overdue banner via Health.get_overdue_tasks
+        overdue = scheduler.get_overdue_tasks()
+        if overdue:
+            st.error(
+                f"{len(overdue)} overdue task(s): "
+                + ", ".join(t.type for t in overdue)
             )
 
-            st.success(f"Schedule for {st.session_state.animal.name} ({st.session_state.animal.type})")
+        # Priority-sorted pending tasks via Health.prioritize_tasks
+        sorted_tasks = scheduler.prioritize_tasks()
 
-            rows = []
-            for task in sorted_tasks:
-                overdue = " OVERDUE" if task.is_overdue() else ""
-                rows.append({
-                    "time": task.scheduled_time.strftime("%I:%M %p") if task.scheduled_time else "anytime",
-                    "priority": task.priority.upper(),
-                    "task": task.type + overdue,
-                    "duration (min)": task.duration,
-                    "cost ($)": f"{task.cost:.2f}",
-                })
-            st.table(rows)
-
-            # Also print to terminal via the User method
-            st.session_state.user.print_daily_schedule()
+        if not sorted_tasks:
+            st.warning("No pending tasks. Add some tasks above.")
+        else:
+            st.success(
+                f"Schedule for {st.session_state.animal.name} "
+                f"({st.session_state.animal.type})"
+            )
+            st.table([
+                {
+                    "time": t.scheduled_time.strftime("%I:%M %p") if t.scheduled_time else "anytime",
+                    "priority": t.priority.upper(),
+                    "task": t.type + (" OVERDUE" if t.is_overdue() else ""),
+                    "duration (min)": t.duration,
+                    "cost ($)": f"{t.cost:.2f}",
+                    "recurrence": t.recurrence or "—",
+                }
+                for t in sorted_tasks
+            ])

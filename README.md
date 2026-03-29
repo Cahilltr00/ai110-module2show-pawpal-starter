@@ -53,3 +53,40 @@ pip install -r requirements.txt
     This command runs tests that cover whether out-of-order input gets sorted chronologically, covers the enforcement of priority rankings. This test suite also covers whether or not there are conflicts with task times, if there is a message should be displayed showing which times and pets are conflicting.
 
     Confidence Level: ****
+
+### Features Implemented
+
+Implemented Features
+Task Scheduling
+
+Schedule a task to a specific time of day via Task.schedule()
+Detect overdue tasks by comparing scheduled_time against the current wall-clock time (Task.is_overdue())
+Retrieve all incomplete tasks scheduled within an upcoming time window (Health.get_upcoming_tasks(hours))
+Sorting & Prioritization
+
+Sort tasks chronologically by scheduled_time; tasks with no scheduled time always fall last via a "99:99" sentinel (Health.sort_by_time())
+Prioritize all pending tasks using a two-key sort — priority tier first (high → medium → low), then scheduled time within each tier (Health.prioritize_tasks())
+Filtering
+
+Filter a task list to completed or pending tasks only (Health.filter_by_completion())
+Filter a task list to a specific pet by name, case-insensitively (Health.filter_by_pet_name())
+Conflict Detection
+
+Detect scheduling conflicts by bucketing all incomplete, scheduled tasks into a time-slot map and flagging any slot with more than one task (User.detect_conflicts(), Health.detect_conflicts())
+Conflict detection ignores completed tasks and tasks with no scheduled time
+Recurring Tasks
+
+Mark a task complete and automatically clone it as a new pending task when recurrence is "daily" or "weekly" (Health.complete_task())
+The cloned task preserves all original fields (type, time, priority, cost) with a fresh task_id and completed=False
+Non-recurring tasks and tasks whose animal is not registered return None with no side effects
+Health Records
+
+Log vet visits and observed symptoms per pet by animal_id (Health.log_vet_visit(), Health.log_symptom())
+Check whether any vaccine for a pet is due today or overdue by comparing next_due_date against today's date (Health.is_vaccine_due())
+Retrieve all vaccine records for a specific pet (Health.get_vaccine_record())
+Multi-Pet Management
+
+Register multiple pets under a single Health scheduler; get_all_tasks() flattens all pets' task lists in O(n) over total tasks
+Add and remove pets from a User; conflict detection and schedule printing span all registered pets
+
+<a href="/course_images/ai110/your_screenshot_name.png" target="_blank"><img src='/image.png' title='PawPal App' width='' alt='PawPal App' class='center-block' /></a>.
